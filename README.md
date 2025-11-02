@@ -5,10 +5,11 @@ A PyTorch-based audio classification toolkit that supports multiple audio classi
 ## Features
 
 - Supports various audio feature extraction methods, including MelSpectrogram, Spectrogram, MFCC, Fbank, etc.
-- Integrates multiple classic audio classification models such as TDNN, CAMPPlus, EcapaTdnn, Res2Net, etc.
-- Provides data augmentation functions, including speed perturbation, volume perturbation, noise perturbation, reverb perturbation, etc.
+- Integrates multiple classic audio classification models such as TDNN, CAMPPlus, EcapaTdnn, Res2Net, PANNs, ResNet-SE, etc.
+- Provides data augmentation functions, including speed perturbation, volume perturbation, noise perturbation, reverb perturbation, and spec augmentation.
 - Supports automatic mixed-precision training and Pytorch 2.0 compiler acceleration.
-- Includes complete data set processing, model training, and evaluation workflows.
+- Includes complete dataset processing, model training, evaluation, and feature extraction workflows.
+- Allows custom configuration of training parameters through YAML files for different models.
 
 ## Environment Requirements
 
@@ -43,70 +44,120 @@ python setup.py install
 
 ## Data Preparation
 
-The `create_data.py` script can help generate data lists for training and testing. It supports different types of datasets:
+The `create_data.py` script helps generate data lists for training and testing, supporting different dataset types:
 
 1. **General audio datasets**: Organize audio files into folders by category, then run:
    ```python
    get_data_list(audio_path='dataset/audio', list_path='dataset')
    ```
+   This will generate `train_list.txt`, `test_list.txt`, and `label_list.txt` in the specified `list_path`.
 
-2. **Language identification datasets**: For specific language datasets, use:
+2. **Language identification datasets**: For specific language datasets with predefined label mappings, use:
    ```python
    get_language_identification_data_list(audio_path='dataset/language', list_path='dataset/')
    ```
+   Supports 14 language/dialect categories including Standard Mandarin, Southwestern Mandarin, Wu dialect, etc.
 
-3. **UrbanSound8K dataset**: To process the UrbanSound8K dataset:
+3. **UrbanSound8K dataset**: To process the UrbanSound8K dataset with metadata:
    ```python
    create_UrbanSound8K_list(audio_path='dataset/UrbanSound8K/audio',
                             metadata_path='dataset/UrbanSound8K/metadata/UrbanSound8K.csv',
                             list_path='dataset/result8K')
    ```
 
-You can also download a pre-prepared language dataset using the script:
+You can download a pre-prepared language dataset using:
 ```bash
 ./tools/download_language_data.sh
 ```
 
 ## Recording Audio
 
-If you need to record your own audio for testing or training, use the `record_audio.py` script:
+Record custom audio for testing or training with `record_audio.py`:
 ```bash
 python record_audio.py
 ```
-Follow the prompts to enter the recording duration, and the audio file will be saved in the `dataset/save_audio` directory.
+Follow prompts to enter recording duration. Audio files are saved in `dataset/save_audio` with timestamps as filenames.
+
+## Feature Extraction
+
+Pre-extract and save audio features to accelerate training using `extract_features.py`:
+```bash
+python extract_features.py --configs configs/cam++.yml --save_dir dataset/features --max_duration 100
+```
+- `--configs`: Path to model configuration file
+- `--save_dir`: Directory to save extracted features
+- `--max_duration`: Maximum audio duration (in seconds) to prevent memory issues
+
+Extracted features are saved as `.npy` files, with corresponding list files (`train_list_features.txt`, `test_list_features.txt`) generated.
 
 ## Model Training
 
-The training process is managed by the `trainer.py` class, which supports various configurations through YAML files (e.g., `configs/eres2net.yml`). Key configurations include:
+Train models using `train.py` with configuration files in the `configs` directory (supports `eres2net.yml`, `cam++.yml`, `ecapa_tdnn.yml`, `tdnn.yml`, `res2net.yml`, `panns.yml`, `resnet_se.yml`):
 
-- Model settings (type, number of classes, etc.)
-- Optimizer and learning rate scheduler parameters
-- Training parameters (epochs, batch size, mixed precision, etc.)
+```bash
+python train.py --configs configs/cam++.yml --save_model_path models/ --log_dir log/
+```
 
-Example training configuration (from `eres2net.yml`):
+Key parameters:
+- `--configs`: Path to model configuration file (defines dataset settings, feature extraction method, batch size, etc.)
+- `--data_augment_configs`: Path to data augmentation configuration file (default: `configs/augmentation.yml`)
+- `--save_model_path`: Directory to save trained models
+- `--log_dir`: Directory to save VisualDL logs
+- `--resume_model`: Path to resume training from a checkpoint
+- `--pretrained_model`: Path to load pretrained weights
+- `--overwrites`: Override configuration parameters (e.g., `"train_conf.max_epoch=100"`)
+
+### Configuration Details
+
+Configuration files control training behavior, including:
+
 ```yaml
-model_conf:
-  model: 'ERes2Net'
-  model_args:
-    num_class: null  # Automatically determined from label list if null
+# Dataset parameters
+dataset_conf:
+  dataset:
+    min_duration: 0.4        # Minimum audio duration (seconds)
+    max_duration: 3          # Maximum audio duration (seconds)
+    sample_rate: 16000       # Audio sampling rate
+    use_dB_normalization: True  # Enable volume normalization
+    target_dB: -20           # Target volume for normalization
+  dataLoader:
+    batch_size: 64           # Training batch size
+    num_workers: 8           # Number of data loading threads
+  eval_conf:
+    batch_size: 8            # Evaluation batch size
+    max_duration: 20         # Maximum duration for evaluation
 
-optimizer_conf:
-  optimizer: 'Adam'
-  optimizer_args:
-    lr: 0.001
-    weight_decay: 1e-5
-  scheduler: 'WarmupCosineSchedulerLR'
-
-train_conf:
-  enable_amp: False
-  use_compile: False
-  max_epoch: 60
-  log_interval: 10
+# Preprocessing parameters
+preprocess_conf:
+  use_hf_model: False        # Use HuggingFace models for feature extraction
+  feature_method: 'Fbank'    # Feature extraction method (MelSpectrogram, Spectrogram, MFCC, Fbank)
 ```
 
 ## Evaluation Metrics
 
-The primary evaluation metric used is accuracy, calculated in `macls/metric/metrics.py`.
+The primary evaluation metric is accuracy, calculated in `macls/metric/metrics.py`. During training, accuracy and loss are logged for both training and validation sets.
+
+## Project Structure
+
+```
+Audio_DeepLearning/
+├── create_data.py           # Dataset list generation script
+├── extract_features.py      # Audio feature extraction script
+├── record_audio.py          # Audio recording script
+├── train.py                 # Model training script
+├── configs/                 # Configuration files for different models
+├── macls/
+│   ├── trainer.py           # Training manager class
+│   ├── data_utils/
+│   │   ├── reader.py        # Dataset loading class
+│   │   └── featurizer.py    # Audio feature extraction class
+│   ├── metric/
+│   │   └── metrics.py       # Evaluation metrics
+│   └── utils/
+│       └── record.py        # Audio recording utility
+└── tools/
+    └── download_language_data.sh  # Language dataset download script
+```
 
 ## License
 
